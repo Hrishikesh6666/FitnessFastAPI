@@ -94,7 +94,7 @@ class PushupTracker:
                             self.pushup_position = "down"
                             self.last_pushup_time = current_time
                             self.feedback = "Good pushup!"
-                            if self.pushups_in_current_set >= 12:
+                            if self.pushups_in_current_set >= 10:
                                 self.set_count += 1
                                 self.pushups_in_current_set = 0
                                 self.feedback = "Set complete! Rest now."

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pushup Counter Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .video-container {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #video {
+            width: 100%;
+            transform: scaleX(-1);
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+        .stats {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .feedback {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Pushup Counter Test</h1>
+    <div class="container">
+        <div class="video-container">
+            <video id="video" autoplay></video>
+            <canvas id="overlay"></canvas>
+        </div>
+        <div class="stats">
+            <h2>Counts</h2>
+            <p>Total Pushups: <span id="totalCount">0</span></p>
+            <p>Current Set: <span id="setCount">0</span></p>
+            <div class="feedback" id="feedback"></div>
+            <button id="startBtn">Start Tracking</button>
+            <button id="resetBtn">Reset Counts</button>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const totalCount = document.getElementById('totalCount');
+        const setCount = document.getElementById('setCount');
+        const feedback = document.getElementById('feedback');
+
+        let ws = null;
+        let isTracking = false;
+        let videoStream = null;
+        const API_URL = 'wss://fitnessfastapi.onrender.com/ws';
+
+        // Setup video stream
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480, facingMode: 'user' }
+                });
+                video.srcObject = stream;
+                videoStream = stream;
+
+                // Set canvas size to match video
+                overlay.width = video.videoWidth;
+                overlay.height = video.videoHeight;
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve();
+                    };
+                });
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+                alert('Could not access webcam. Please enable camera permissions.');
+            }
+        }
+
+        // Connect to WebSocket API
+        function connectWebSocket() {
+            ws = new WebSocket(API_URL);
+
+            ws.onopen = () => {
+                console.log('Connected to WebSocket');
+                startTracking();
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateUI(data);
+                drawLandmarks(data.landmarks);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                feedback.textContent = 'Connection error. Try refreshing.';
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                if (isTracking) {
+                    feedback.textContent = 'Connection lost. Reconnecting...';
+                    setTimeout(connectWebSocket, 2000);
+                }
+            };
+        }
+
+        // Start tracking loop
+        function startTracking() {
+            isTracking = true;
+            startBtn.textContent = 'Stop Tracking';
+            processFrame();
+        }
+
+        // Stop tracking
+        function stopTracking() {
+            isTracking = false;
+            startBtn.textContent = 'Start Tracking';
+            if (ws) ws.close();
+        }
+
+        // Capture and send frame
+        async function processFrame() {
+            if (!isTracking) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            // Convert to JPEG and send
+            const image = canvas.toDataURL('image/jpeg', 0.8);
+            ws.send(image);
+
+            // Process next frame
+            setTimeout(processFrame, 100); // ~10fps
+        }
+
+        // Update UI with received data
+        function updateUI(data) {
+            totalCount.textContent = data.pushup_count;
+            setCount.textContent = data.set_count;
+            feedback.textContent = data.feedback;
+
+            if (data.calibration_remaining > 0) {
+                feedback.textContent = `Calibrating... ${data.calibration_remaining}s`;
+                feedback.style.backgroundColor = '#fff3cd';
+            } else {
+                feedback.style.backgroundColor = data.feedback.includes('Good') ?
+                    '#d4edda' : '#f8d7da';
+            }
+        }
+
+        // Draw pose landmarks
+        function drawLandmarks(landmarks) {
+            const ctx = overlay.getContext('2d');
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+            if (!landmarks) return;
+
+            ctx.fillStyle = '#00ff00';
+            landmarks.forEach(point => {
+                if (point) {
+                    ctx.beginPath();
+                    ctx.arc(point[0], point[1], 5, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+        }
+
+        // Event Listeners
+        startBtn.addEventListener('click', () => {
+            if (isTracking) {
+                stopTracking();
+            } else {
+                connectWebSocket();
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            totalCount.textContent = '0';
+            setCount.textContent = '0';
+            feedback.textContent = '';
+        });
+
+        // Initialize
+        (async () => {
+            await setupCamera();
+            startBtn.disabled = false;
+        })();
+    </script>
+</body>
+</html>
